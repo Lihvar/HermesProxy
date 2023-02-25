@@ -13,6 +13,106 @@ using HermesProxy.World.Objects;
 
 namespace HermesProxy
 {
+    // This is class is a plain copy of ModernVersion/LegacyVersion/Opcodes but without static constructor
+    public static class VersionChecker
+    {
+        public static bool IsSupportedLegacyVersion(ClientVersionBuild legacyVersion)
+        {
+            switch (legacyVersion)
+            {
+                case ClientVersionBuild.V1_12_1_5875:
+                case ClientVersionBuild.V1_12_2_6005:
+                case ClientVersionBuild.V1_12_3_6141:
+                    return true;
+                case ClientVersionBuild.V2_4_3_8606:
+                    return true;
+                case ClientVersionBuild.V3_3_5a_12340:
+                    return false;
+            }
+
+            return false;
+        }
+
+        public static bool IsSupportedModernVersion(ClientVersionBuild modernVersion)
+        {
+            switch (modernVersion)
+            {
+                case ClientVersionBuild.V2_5_2_39570:
+                case ClientVersionBuild.V2_5_2_39618:
+                case ClientVersionBuild.V2_5_2_39926:
+                case ClientVersionBuild.V2_5_2_40011:
+                case ClientVersionBuild.V2_5_2_40045:
+                case ClientVersionBuild.V2_5_2_40203:
+                case ClientVersionBuild.V2_5_2_40260:
+                case ClientVersionBuild.V2_5_2_40422:
+                case ClientVersionBuild.V2_5_2_40488:
+                case ClientVersionBuild.V2_5_2_40617:
+                case ClientVersionBuild.V2_5_2_40892:
+                case ClientVersionBuild.V2_5_2_41446:
+                case ClientVersionBuild.V2_5_2_41510:
+                case ClientVersionBuild.V1_14_0_39802:
+                case ClientVersionBuild.V1_14_0_39958:
+                case ClientVersionBuild.V1_14_0_40140:
+                case ClientVersionBuild.V1_14_0_40179:
+                case ClientVersionBuild.V1_14_0_40237:
+                case ClientVersionBuild.V1_14_0_40347:
+                case ClientVersionBuild.V1_14_0_40441:
+                case ClientVersionBuild.V1_14_0_40618:
+                    return true;
+                case ClientVersionBuild.V1_14_1_40487:
+                case ClientVersionBuild.V1_14_1_40594:
+                case ClientVersionBuild.V1_14_1_40666:
+                case ClientVersionBuild.V1_14_1_40688:
+                case ClientVersionBuild.V1_14_1_40800:
+                case ClientVersionBuild.V1_14_1_40818:
+                case ClientVersionBuild.V1_14_1_40926:
+                case ClientVersionBuild.V1_14_1_40962:
+                case ClientVersionBuild.V1_14_1_41009:
+                case ClientVersionBuild.V1_14_1_41030:
+                case ClientVersionBuild.V1_14_1_41077:
+                case ClientVersionBuild.V1_14_1_41137:
+                case ClientVersionBuild.V1_14_1_41243:
+                case ClientVersionBuild.V1_14_1_41511:
+                case ClientVersionBuild.V1_14_1_41794:
+                case ClientVersionBuild.V1_14_1_42032:
+                    return true;
+                case ClientVersionBuild.V2_5_3_41402:
+                case ClientVersionBuild.V2_5_3_41531:
+                case ClientVersionBuild.V2_5_3_41750:
+                case ClientVersionBuild.V2_5_3_41812:
+                case ClientVersionBuild.V2_5_3_42083:
+                case ClientVersionBuild.V2_5_3_42328:
+                case ClientVersionBuild.V2_5_3_42598:
+                case ClientVersionBuild.V1_14_2_41858:
+                case ClientVersionBuild.V1_14_2_41959:
+                case ClientVersionBuild.V1_14_2_42065:
+                case ClientVersionBuild.V1_14_2_42082:
+                case ClientVersionBuild.V1_14_2_42214:
+                case ClientVersionBuild.V1_14_2_42597:
+                    return true;
+            }
+
+            return false;
+        }
+
+        public static ClientVersionBuild GetBestLegacyVersion(ClientVersionBuild modernVersion)
+        {
+            return GetExpansionVersion(modernVersion) switch
+            {
+                1 => ClientVersionBuild.V1_12_1_5875,
+                2 => ClientVersionBuild.V2_4_3_8606,
+                _ => ClientVersionBuild.Zero,
+            };
+        }
+
+        private static byte GetExpansionVersion(ClientVersionBuild version)
+        {
+            string str = version.ToString();
+            str = str.Replace("V", "");
+            str = str.Substring(0, str.IndexOf("_"));
+            return (byte)UInt32.Parse(str);
+        }
+    }
     public class UpdateFieldInfo
     {
         public int Value;
@@ -98,6 +198,8 @@ namespace HermesProxy
             switch (version)
             {
                 case ClientVersionBuild.V1_12_1_5875:
+                case ClientVersionBuild.V1_12_2_6005:
+                case ClientVersionBuild.V1_12_3_6141:
                     return ClientVersionBuild.V1_12_1_5875;
                 case ClientVersionBuild.V2_4_3_8606:
                     return ClientVersionBuild.V2_4_3_8606;
@@ -219,6 +321,19 @@ namespace HermesProxy
             return null;
         }
 
+        public static Type GetResponseCodesEnum()
+        {
+            switch (Opcodes.GetOpcodesDefiningBuild(Build))
+            {
+                case ClientVersionBuild.V1_12_1_5875:
+                    return typeof(World.Enums.V1_12_1_5875.ResponseCodes);
+                case ClientVersionBuild.V2_4_3_8606:
+                case ClientVersionBuild.V3_3_5a_12340:
+                    return typeof(World.Enums.V2_4_3_8606.ResponseCodes);
+            }
+            return null;
+        }
+
         public static byte ExpansionVersion { get; private set; }
         public static byte MajorVersion { get; private set; }
         public static byte MinorVersion { get; private set; }
@@ -317,7 +432,7 @@ namespace HermesProxy
         {
             if (RemovedInVersion(ClientVersionBuild.V2_0_1_6180))
                 return (InventoryResult)Enum.Parse(typeof(InventoryResult), ((InventoryResultVanilla)result).ToString());
-            else
+            else if (RemovedInVersion(ClientVersionBuild.V3_0_2_9056))
                 return (InventoryResult)Enum.Parse(typeof(InventoryResult), ((InventoryResultTBC)result).ToString());
 
             return (InventoryResult)result;
@@ -437,6 +552,12 @@ namespace HermesProxy
                 case ClientVersionBuild.V1_14_1_41511:
                 case ClientVersionBuild.V1_14_1_41794:
                 case ClientVersionBuild.V1_14_1_42032:
+                case ClientVersionBuild.V1_14_2_41858:
+                case ClientVersionBuild.V1_14_2_41959:
+                case ClientVersionBuild.V1_14_2_42065:
+                case ClientVersionBuild.V1_14_2_42082:
+                case ClientVersionBuild.V1_14_2_42214:
+                case ClientVersionBuild.V1_14_2_42597:
                     return ClientVersionBuild.V1_14_1_40688;
                 case ClientVersionBuild.V2_5_2_39570:
                 case ClientVersionBuild.V2_5_2_39618:
@@ -452,6 +573,14 @@ namespace HermesProxy
                 case ClientVersionBuild.V2_5_2_41446:
                 case ClientVersionBuild.V2_5_2_41510:
                     return ClientVersionBuild.V2_5_2_39570;
+                case ClientVersionBuild.V2_5_3_41402:
+                case ClientVersionBuild.V2_5_3_41531:
+                case ClientVersionBuild.V2_5_3_41750:
+                case ClientVersionBuild.V2_5_3_41812:
+                case ClientVersionBuild.V2_5_3_42083:
+                case ClientVersionBuild.V2_5_3_42328:
+                case ClientVersionBuild.V2_5_3_42598:
+                    return ClientVersionBuild.V2_5_3_41750;
             }
             return ClientVersionBuild.Zero;
         }
@@ -568,6 +697,19 @@ namespace HermesProxy
             return null;
         }
 
+        public static Type GetResponseCodesEnum()
+        {
+            switch (Opcodes.GetOpcodesDefiningBuild(Build))
+            {
+                case ClientVersionBuild.V2_5_2_39570:
+                    return typeof(World.Enums.V2_5_2_39570.ResponseCodes);
+                case ClientVersionBuild.V2_5_3_41750:
+                case ClientVersionBuild.V1_14_1_40688:
+                    return typeof(World.Enums.V1_14_1_40688.ResponseCodes);
+            }
+            return null;
+        }
+
         public static byte ExpansionVersion { get; private set; }
         public static byte MajorVersion { get; private set; }
         public static byte MinorVersion { get; private set; }
@@ -628,6 +770,11 @@ namespace HermesProxy
             return AddedInVersion(retailExpansion, retailMajor, retailMinor);
         }
 
+        public static bool RemovedInVersion(byte retailExpansion, byte retailMajor, byte retailMinor, byte classicEraExpansion, byte classicEraMajor, byte classicEraMinor, byte classicExpansion, byte classicMajor, byte classicMinor)
+        {
+            return !AddedInVersion(retailExpansion, retailMajor, retailMinor, classicEraExpansion, classicEraMajor, classicEraMinor, classicExpansion, classicMajor, classicMinor);
+        }
+
         public static bool AddedInClassicVersion(byte classicEraExpansion, byte classicEraMajor, byte classicEraMinor, byte classicExpansion, byte classicMajor, byte classicMinor)
         {
             if (ExpansionVersion == 1)
@@ -636,6 +783,11 @@ namespace HermesProxy
                 return AddedInVersion(classicExpansion, classicMajor, classicMinor);
 
             return false;
+        }
+
+        public static bool RemovedInClassicVersion(byte classicEraExpansion, byte classicEraMajor, byte classicEraMinor, byte classicExpansion, byte classicMajor, byte classicMinor)
+        {
+            return !AddedInClassicVersion(classicEraExpansion, classicEraMajor, classicEraMinor, classicExpansion, classicMajor, classicMinor);
         }
 
         public static bool IsVersion(byte expansion, byte major, byte minor)
@@ -721,6 +873,8 @@ namespace HermesProxy
                 return 1556;
             if (IsVersion(1, 14, 1))
                 return 1618;
+            if (IsVersion(1, 14, 2) || IsVersion(2, 5, 3))
+                return 1672;
             return 0;
         }
 
@@ -856,6 +1010,13 @@ namespace HermesProxy
                     return 2;
             }
             return 0;
+        }
+
+        public static byte ConvertResponseCodesValue(byte legacyValue)
+        {
+            string legacyName = Enum.ToObject(LegacyVersion.GetResponseCodesEnum(), legacyValue).ToString();
+            byte modernValue = (byte)Enum.Parse(GetResponseCodesEnum(), legacyName);
+            return modernValue;
         }
     }
 }

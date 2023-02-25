@@ -212,6 +212,17 @@ namespace HermesProxy.World.Client
             var chatTag = (ChatTag)packet.ReadUInt8();
             var chatFlags = (ChatFlags)Enum.Parse(typeof(ChatFlags), chatTag.ToString());
 
+            if (Session.GameState.IgnoredPlayers.Contains(sender) && !chatFlags.HasFlag(ChatFlags.GM) && chatType != ChatMessageTypeVanilla.Ignored)
+            {
+                if (chatType == ChatMessageTypeVanilla.Whisper)
+                { // In legacy versions the client handled the ignore itself and also sends a "You are ignored" message back.
+                    WorldPacket ignoreResponsePacket = new WorldPacket(Opcode.CMSG_CHAT_REPORT_IGNORED);
+                    ignoreResponsePacket.WriteGuid(sender!.To64());
+                    SendPacketToServer(ignoreResponsePacket);
+                }
+                return;
+            }
+            
             string addonPrefix = "";
             if (!ChatPkt.CheckAddonPrefix(GetSession().GameState.AddonPrefixes, ref language, ref text, ref addonPrefix))
                 return;
@@ -332,6 +343,18 @@ namespace HermesProxy.World.Client
             uint achievementId = 0;
             if (chatType == ChatMessageTypeWotLK.Achievement || chatType == ChatMessageTypeWotLK.GuildAchievement)
                 achievementId = packet.ReadUInt32();
+
+            if (Session.GameState.IgnoredPlayers.Contains(sender) && !chatFlags.HasFlag(ChatFlags.GM) && chatType != ChatMessageTypeWotLK.Ignored)
+            {
+                if (chatType == ChatMessageTypeWotLK.Whisper)
+                { // In legacy versions the client handled the ignore itself and also sends a "You are ignored" message back.
+                    WorldPacket ignoreResponsePacket = new WorldPacket(Opcode.CMSG_CHAT_REPORT_IGNORED);
+                    ignoreResponsePacket.WriteGuid(sender!.To64());
+                    ignoreResponsePacket.WriteUInt8(0); // unk
+                    SendPacketToServer(ignoreResponsePacket);
+                }
+                return;
+            }
 
             string addonPrefix = "";
             if (!ChatPkt.CheckAddonPrefix(GetSession().GameState.AddonPrefixes, ref language, ref text, ref addonPrefix))
@@ -480,7 +503,7 @@ namespace HermesProxy.World.Client
             uint nameLength = packet.ReadUInt32();
             string targetName = packet.ReadString(nameLength);
             WowGuid128 targetGuid = GetSession().GameState.GetPlayerGuidByName(targetName);
-            emote.TargetGUID = targetGuid != null ? targetGuid : emote.SourceGUID;
+            emote.TargetGUID = targetGuid != null ? targetGuid : WowGuid128.Empty;
             SendPacketToClient(emote);
         }
 

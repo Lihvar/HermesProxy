@@ -16,7 +16,11 @@ namespace HermesProxy.World.Client
             PartyCommandResult party = new PartyCommandResult();
             party.Command = (byte)packet.ReadUInt32();
             party.Name = packet.ReadCString();
-            party.Result = (byte)packet.ReadUInt32();
+            uint partyResult = packet.ReadUInt32();
+            if (LegacyVersion.AddedInVersion(ClientVersionBuild.V2_0_1_6180))
+                party.Result = (byte)partyResult;
+            else
+                party.Result = (byte)Enum.Parse(typeof(PartyResultModern), ((PartyResultVanilla)partyResult).ToString());
             if (LegacyVersion.AddedInVersion(ClientVersionBuild.V3_0_2_9056))
                 party.ResultData = packet.ReadUInt32();
             SendPacketToClient(party);
@@ -82,12 +86,12 @@ namespace HermesProxy.World.Client
                     party.PartyFlags |= GroupFlags.Raid;
 
                 party.DifficultySettings = new PartyDifficultySettings();
-                party.DifficultySettings.DungeonDifficultyID = Difficulty.Normal;
+                party.DifficultySettings.DungeonDifficultyID = DifficultyModern.Normal;
 
                 if (ModernVersion.ExpansionVersion > 1)
-                    party.DifficultySettings.RaidDifficultyID = Difficulty.Raid25N;
+                    party.DifficultySettings.RaidDifficultyID = DifficultyModern.Raid25N;
                 else
-                    party.DifficultySettings.RaidDifficultyID = Difficulty.Raid40;
+                    party.DifficultySettings.RaidDifficultyID = DifficultyModern.Raid40;
 
                 if (party.PartyIndex != 0)
                     party.PartyType = GroupType.PvP;
@@ -121,6 +125,12 @@ namespace HermesProxy.World.Client
                         party.PlayerList.Add(member);
                         uniqueMembers.Add(member.GUID);
                     }
+
+                    Session.GameState.UpdatePlayerCache(member.GUID, new PlayerCache
+                    { // it is not guaranteed that the client will invoke a QUERY_PLAYER_NAME. Client caches in between logins
+                        Name = member.Name,
+                        ClassId = member.ClassId,
+                    });
                 }
 
                 if (allAssist)
@@ -132,6 +142,8 @@ namespace HermesProxy.World.Client
                 party.LootSettings.Method = (LootMethod)packet.ReadUInt8();
                 party.LootSettings.LootMaster = packet.ReadGuid().To128(GetSession().GameState);
                 party.LootSettings.Threshold = packet.ReadUInt8();
+
+                GetSession().GameState.WeWantToLeaveGroup = false;
                 GetSession().GameState.CurrentGroups[party.PartyIndex] = party;
             }
             else
@@ -142,6 +154,9 @@ namespace HermesProxy.World.Client
                 party.LeaderGUID = WowGuid128.Empty;
                 party.MyIndex = -1;
                 GetSession().GameState.CurrentGroups[party.PartyIndex] = null;
+
+                if (!GetSession().GameState.WeWantToLeaveGroup)
+                    SendPacketToClient(new GroupUninvite()); // Send kick message
             }
 
             SendPacketToClient(party);
@@ -199,6 +214,12 @@ namespace HermesProxy.World.Client
                         party.PlayerList.Add(member);
                         uniqueMembers.Add(member.GUID);
                     }
+
+                    Session.GameState.UpdatePlayerCache(member.GUID, new PlayerCache
+                    { // it is not guaranteed that the client will invoke a QUERY_PLAYER_NAME. Client caches in between logins
+                        Name = member.Name,
+                        ClassId = member.ClassId,
+                    });
                 }
 
                 if (allAssist)
@@ -212,13 +233,15 @@ namespace HermesProxy.World.Client
                 party.LootSettings.Threshold = packet.ReadUInt8();
 
                 party.DifficultySettings = new PartyDifficultySettings();
-                party.DifficultySettings.DungeonDifficultyID = (Difficulty)packet.ReadUInt8();
+                int difficultyId = packet.ReadUInt8();
+                party.DifficultySettings.DungeonDifficultyID = (DifficultyModern)Enum.Parse(typeof(DifficultyModern), ((DifficultyLegacy)difficultyId).ToString());
 
                 if (ModernVersion.ExpansionVersion > 1)
-                    party.DifficultySettings.RaidDifficultyID = Difficulty.Raid25N;
+                    party.DifficultySettings.RaidDifficultyID = DifficultyModern.Raid25N;
                 else
-                    party.DifficultySettings.RaidDifficultyID = Difficulty.Raid40;
+                    party.DifficultySettings.RaidDifficultyID = DifficultyModern.Raid40;
 
+                GetSession().GameState.WeWantToLeaveGroup = false;
                 GetSession().GameState.CurrentGroups[party.PartyIndex] = party;
             }
             else
@@ -229,6 +252,9 @@ namespace HermesProxy.World.Client
                 party.LeaderGUID = WowGuid128.Empty;
                 party.MyIndex = -1;
                 GetSession().GameState.CurrentGroups[party.PartyIndex] = null;
+
+                if (!GetSession().GameState.WeWantToLeaveGroup)
+                    SendPacketToClient(new GroupUninvite()); // Send kick message
             }
 
             SendPacketToClient(party);

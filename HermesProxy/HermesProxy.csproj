@@ -1,11 +1,11 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net6.0</TargetFramework>
-    <StartupObject>HermesProxy.Server</StartupObject>
+    <StartupObject>HermesProxy.Program</StartupObject>
     <ApplicationIcon>Hermes.ico</ApplicationIcon>
-    <Copyright>Copyright © WowLegacyCore 2022</Copyright>
+    <Copyright>Copyright © WowLegacyCore 2023</Copyright>
     <Authors>WowLegacyCore</Authors>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
   </PropertyGroup>
@@ -14,11 +14,14 @@
     <!-- Build/Publish config -->
     <!-- we HAVE to set some runtime :(   We overwrite this with 'use-current-runtime' inside build process -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeNativeLibrariesForSelfExtract Condition="$([MSBuild]::IsOSPlatform('Windows'))">true</IncludeNativeLibrariesForSelfExtract>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <PublishTrimmed>true</PublishTrimmed>
-    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <DefineConstants>_WINDOWS</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,6 +30,8 @@
     <PackageReference Include="GitVersion.MsBuild" Version="5.10.3">
       <PrivateAssets>All</PrivateAssets>
     </PackageReference>
+
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -57,5 +62,4 @@
       <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
   </ItemGroup>
-
 </Project>

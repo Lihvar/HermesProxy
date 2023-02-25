@@ -10,6 +10,13 @@ namespace HermesProxy.World.Client
     public partial class WorldClient
     {
         // Handlers for SMSG opcodes coming the legacy world server
+        [PacketHandler(Opcode.SMSG_PONG)]
+        void HandlePingResponse(WorldPacket packet)
+        {
+            uint serial = packet.ReadUInt32();
+            SendPacketToClient(new Pong(serial));
+        }
+
         [PacketHandler(Opcode.SMSG_TUTORIAL_FLAGS)]
         void HandleTutorialFlags(WorldPacket packet)
         {
@@ -141,40 +148,24 @@ namespace HermesProxy.World.Client
         [PacketHandler(Opcode.MSG_CORPSE_QUERY)]
         void HandleCorpseQuery(WorldPacket packet)
         {
-            CorpseLocation corpse = new();
-            
+            CorpseLocation corpse = new()
+            {
+                Player = GetSession().GameState.CurrentPlayerGuid,
+                Transport = WowGuid128.Empty,
+            };
+
             corpse.Valid = packet.ReadBool();
-            if (!corpse.Valid)
+            if (corpse.Valid)
             {
-                {
-                    ChatPkt chatA = new ChatPkt(GetSession(), ChatMessageTypeModern.System, $"----------------------------");
-                    SendPacketToClient(chatA);
-                    ChatPkt chatB = new ChatPkt(GetSession(), ChatMessageTypeModern.System, $"HermesProxy: Did you log out? If you see this message and you cant find your corpse/rezz please report this on GitHub: \nV!FALSE!:{corpse.Valid}");
-                    SendPacketToClient(chatB);
-                    ChatPkt chatC = new ChatPkt(GetSession(), ChatMessageTypeModern.System, $"----------------------------");
-                    SendPacketToClient(chatC);
-                }
-                return;
+                corpse.ActualMapID = packet.ReadInt32();
+                corpse.Position = packet.ReadVector3();
+                corpse.MapID = packet.ReadInt32();
+                if (LegacyVersion.AddedInVersion(ClientVersionBuild.V3_2_2_10482))
+                    packet.ReadInt32(); // Corpse Low GUID
             }
-
-            corpse.MapID = packet.ReadInt32();
-            corpse.Position = packet.ReadVector3();
-            corpse.ActualMapID = packet.ReadInt32();
-            if (LegacyVersion.AddedInVersion(ClientVersionBuild.V3_2_2_10482))
-                packet.ReadInt32(); // Corpse Low GUID
-
-            corpse.Player = GetSession().GameState.CurrentPlayerGuid;
-            corpse.Transport = WowGuid128.Empty;
-
+            else
             {
-                ChatPkt chatA = new ChatPkt(GetSession(), ChatMessageTypeModern.System, $"----------------------------");
-                SendPacketToClient(chatA);
-                ChatPkt chatB = new ChatPkt(GetSession(), ChatMessageTypeModern.System, $"HermesProxy: Did you log out? If you see this message and you cant find your corpse/rezz please report this on GitHub: \nV:{corpse.Valid}\nI:{corpse.Player == GetSession().GameState.CurrentPlayerGuid}\nC:{GetSession().GameState.CurrentPlayerGuid == GetSession().GameState.CurrentPlayerInfo.CharacterGuid}\nM:{corpse.MapID}/{corpse.ActualMapID}\nCP:{corpse.Position}\nPP:");
-                SendPacketToClient(chatB);
-                ChatPkt chatC = new ChatPkt(GetSession(), ChatMessageTypeModern.System, $"And just to verify is that your current character name?: {GetSession().GameState.CurrentPlayerInfo.Name}-{GetSession().GameState.CurrentPlayerInfo.Realm.Name}");
-                SendPacketToClient(chatC);
-                ChatPkt chatD = new ChatPkt(GetSession(), ChatMessageTypeModern.System, $"----------------------------");
-                SendPacketToClient(chatD);
+                corpse.MapID = corpse.ActualMapID = (int)GetSession().GameState.CurrentMapId;
             }
 
             SendPacketToClient(corpse);
@@ -281,11 +272,23 @@ namespace HermesProxy.World.Client
                 GetSession().GameState.CachedPlayers.Remove(invalidate.Guid);
         }
 
-        [PacketHandler(Opcode.SMSG_PONG)]
-        void HandlePingResponse(WorldPacket packet)
+        [PacketHandler(Opcode.SMSG_ZONE_UNDER_ATTACK)]
+        void HandleZoneUnderAttack(WorldPacket packet)
         {
-            uint serial = packet.ReadUInt32();
-            SendPacketToClient(new Pong(serial));
+            ZoneUnderAttack zone = new();
+            zone.AreaID = packet.ReadInt32();
+            SendPacketToClient(zone);
+        }
+
+        [PacketHandler(Opcode.MSG_SET_DUNGEON_DIFFICULTY)]
+        void HandleSetDungeonDifficulty(WorldPacket packet)
+        {
+            DungeonDifficultySet difficulty = new();
+            int difficultyId = packet.ReadInt32();
+            difficulty.DifficultyID = (byte)Enum.Parse(typeof(DifficultyModern), ((DifficultyLegacy)difficultyId).ToString());
+            packet.ReadInt32(); // always 1
+            packet.ReadInt32(); // IsInGroup
+            SendPacketToClient(difficulty);
         }
     }
 }

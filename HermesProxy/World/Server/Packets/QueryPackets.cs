@@ -97,6 +97,20 @@ namespace HermesProxy.World.Server.Packets
         public WowGuid128 Player;
     }
 
+    public class QueryPlayerNames : ClientPacket
+    {
+        public QueryPlayerNames(WorldPacket packet) : base(packet) { }
+
+        public override void Read()
+        {
+            uint count = _worldPacket.ReadUInt32();
+            for (uint i = 0; i < count; i++)
+                Players.Add(_worldPacket.ReadPackedGuid128());
+        }
+
+        public List<WowGuid128> Players = new List<WowGuid128>();
+    }
+
     public class QueryPlayerNameResponse : ServerPacket
     {
         public QueryPlayerNameResponse() : base(Opcode.SMSG_QUERY_PLAYER_NAME_RESPONSE)
@@ -109,12 +123,12 @@ namespace HermesProxy.World.Server.Packets
             _worldPacket.WriteInt8((sbyte)Result);
             _worldPacket.WritePackedGuid128(Player);
 
-            if (Result == Enums.Classic.ResponseCodes.Success)
+            if (Result == 0)
                 Data.Write(_worldPacket);
         }
 
         public WowGuid128 Player;
-        public Enums.Classic.ResponseCodes Result; // 0 - full packet, != 0 - only guid
+        public byte Result; // 0 - full packet, != 0 - only guid
         public PlayerGuidLookupData Data;
     }
 

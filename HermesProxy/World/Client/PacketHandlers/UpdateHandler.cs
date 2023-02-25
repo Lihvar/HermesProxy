@@ -25,6 +25,7 @@ namespace HermesProxy.World.Client
             GetSession().GameState.ObjectCacheLegacy.Remove(guid);
             GetSession().GameState.ObjectCacheModern.Remove(guid);
             GetSession().GameState.ObjectCacheMutex.ReleaseMutex();
+            GetSession().GameState.LastAuraCasterOnTarget.Remove(guid);
 
             UpdateObject updateObject = new UpdateObject(GetSession().GameState);
             updateObject.DestroyedGuids.Add(guid);
@@ -312,6 +313,7 @@ namespace HermesProxy.World.Client
                 GetSession().GameState.ObjectCacheLegacy.Remove(guid);
                 GetSession().GameState.ObjectCacheModern.Remove(guid);
                 GetSession().GameState.ObjectCacheMutex.ReleaseMutex();
+                GetSession().GameState.LastAuraCasterOnTarget.Remove(guid);
                 updateObject.OutOfRangeGuids.Add(guid);
             }
         }
@@ -327,8 +329,8 @@ namespace HermesProxy.World.Client
         public void ReadValuesUpdateBlockOnCreate(WorldPacket packet, WowGuid128 guid, ObjectType type, ObjectUpdate updateData, AuraUpdate auraUpdate, object index)
         {
             BitArray updateMaskArray = null;
-            var updates = ReadValuesUpdateBlock(packet, ref type, index, true, null, out updateMaskArray);
-            StoreObjectUpdate(guid, type, updateMaskArray, updates, auraUpdate, null, true, updateData);
+            var updates = ReadValuesUpdateBlock(packet, ref type, index, true, null, out updateMaskArray, out var actuallyChangedValuesMaskArray);
+            StoreObjectUpdate(guid, type, updateMaskArray, updates, auraUpdate, null, true, updateData, actuallyChangedValuesMaskArray);
             GetSession().GameState.ObjectCacheMutex.WaitOne();
             if (!GetSession().GameState.ObjectCacheLegacy.ContainsKey(guid))
                 GetSession().GameState.ObjectCacheLegacy.Add(guid, updates);
@@ -341,8 +343,8 @@ namespace HermesProxy.World.Client
         {
             BitArray updateMaskArray = null;
             ObjectType type = GetSession().GameState.GetOriginalObjectType(guid);
-            var updates = ReadValuesUpdateBlock(packet, ref type, index, false, GetSession().GameState.GetCachedObjectFieldsLegacy(guid), out updateMaskArray);
-            StoreObjectUpdate(guid, type, updateMaskArray, updates, auraUpdate, powerUpdate, false, updateData);
+            var updates = ReadValuesUpdateBlock(packet, ref type, index, false, GetSession().GameState.GetCachedObjectFieldsLegacy(guid), out updateMaskArray, out var actuallyChangedValuesMaskArray);
+            StoreObjectUpdate(guid, type, updateMaskArray, updates, auraUpdate, powerUpdate, false, updateData, actuallyChangedValuesMaskArray);
         }
 
         private string GetIndexString(params object[] values)
@@ -372,9 +374,8 @@ namespace HermesProxy.World.Client
             return obj;
         }
 
-        private Dictionary<int, UpdateField> ReadValuesUpdateBlock(WorldPacket packet, ref ObjectType type, object index, bool isCreating, Dictionary<int, UpdateField> oldValues, out BitArray outUpdateMaskArray)
+        private Dictionary<int, UpdateField> ReadValuesUpdateBlock(WorldPacket packet, ref ObjectType type, object index, bool isCreating, Dictionary<int, UpdateField>? oldValues, out BitArray outUpdateMaskArray, out BitArray outActuallyChangedValuesMaskArray)
         {
-            bool skipDictionary = false;
             bool missingCreateObject = !isCreating && oldValues == null;
             var maskSize = packet.ReadUInt8();
 
@@ -384,7 +385,8 @@ namespace HermesProxy.World.Client
 
             var mask = new BitArray(updateMask);
             outUpdateMaskArray = mask;
-            var dict = oldValues != null ? oldValues : new Dictionary<int, UpdateField>();
+            outActuallyChangedValuesMaskArray = new BitArray(new int[maskSize]);
+            var dict = oldValues ?? new Dictionary<int, UpdateField>();
 
             if (missingCreateObject)
             {
@@ -735,16 +737,20 @@ namespace HermesProxy.World.Client
                         break;
                 }
 
-                if (!skipDictionary)
+                for (int k = 0; k < fieldData.Count; ++k)
                 {
-                    for (int k = 0; k < fieldData.Count; ++k)
+                    if (!dict.ContainsKey(start + k))
                     {
-                        if (!dict.ContainsKey(start + k))
-                            dict.Add(start + k, fieldData[k]);
-                        else
-                            dict[start + k] = fieldData[k];
+                        outActuallyChangedValuesMaskArray.Set(start + k, true);
+                        dict.Add(start + k, fieldData[k]);
                     }
-                }  
+                    else
+                    {
+                        if (dict[start + k] != fieldData[k])
+                            outActuallyChangedValuesMaskArray.Set(start + k, true);
+                        dict[start + k] = fieldData[k];
+                    }
+                }
             }
 
             return dict;
@@ -818,6 +824,7 @@ namespace HermesProxy.World.Client
                         else if (splineFlags.HasAnyFlag(SplineFlagWotLK.FinalOrientation))
                         {
                             monsterMove.FinalOrientation = packet.ReadFloat();
+                            MovementInfo.ClampOrientation(ref monsterMove.FinalOrientation);
                             monsterMove.SplineType = SplineTypeModern.FacingAngle;
                         }
                         else if (splineFlags.HasAnyFlag(SplineFlagWotLK.FinalPoint))
@@ -840,6 +847,7 @@ namespace HermesProxy.World.Client
                         else if (splineFlags.HasAnyFlag(SplineFlagTBC.FinalOrientation))
                         {
                             monsterMove.FinalOrientation = packet.ReadFloat();
+                            MovementInfo.ClampOrientation(ref monsterMove.FinalOrientation);
                             monsterMove.SplineType = SplineTypeModern.FacingAngle;
                         }
                         else if (splineFlags.HasAnyFlag(SplineFlagTBC.FinalPoint))
@@ -862,6 +870,7 @@ namespace HermesProxy.World.Client
                         else if (splineFlags.HasAnyFlag(SplineFlagVanilla.FinalOrientation))
                         {
                             monsterMove.FinalOrientation = packet.ReadFloat();
+                            MovementInfo.ClampOrientation(ref monsterMove.FinalOrientation);
                             monsterMove.SplineType = SplineTypeModern.FacingAngle;
                         }
                         else if (splineFlags.HasAnyFlag(SplineFlagVanilla.FinalPoint))
@@ -922,12 +931,10 @@ namespace HermesProxy.World.Client
                     moveInfo.TransportGuid = packet.ReadPackedGuid().To128(GetSession().GameState);
 
                     moveInfo.Position = packet.ReadVector3();
-                    moveInfo.TransportOffset.X = packet.ReadFloat();
-                    moveInfo.TransportOffset.Y = packet.ReadFloat();
-                    moveInfo.TransportOffset.Z = packet.ReadFloat();
+                    moveInfo.TransportOffset = packet.ReadVector3();
 
                     moveInfo.Orientation = packet.ReadFloat();
-                    moveInfo.TransportOffset.W = moveInfo.Orientation;
+                    moveInfo.TransportOrientation = moveInfo.Orientation;
 
                     moveInfo.CorpseOrientation = packet.ReadFloat();
                 }
@@ -980,6 +987,7 @@ namespace HermesProxy.World.Client
             if (updateData != null && moveInfo != null)
             {
                 moveInfo.Flags = (uint)(((MovementFlagWotLK)moveInfo.Flags).CastFlags<MovementFlagModern>());
+                moveInfo.ValidateMovementInfo();
                 updateData.CreateData.MoveInfo = moveInfo;
             }
         }
@@ -1125,6 +1133,9 @@ namespace HermesProxy.World.Client
             if (GameData.StackableAuras.Contains(spellId))
                 data.Applications++;
 
+            if (GameData.SpellEffectPoints.TryGetValue(spellId, out var basePoints))
+                data.Points = basePoints;
+
             return data;
         }
 
@@ -1151,7 +1162,75 @@ namespace HermesProxy.World.Client
             return flags;
         }
 
-        public void StoreObjectUpdate(WowGuid128 guid, ObjectType objectType, BitArray updateMaskArray, Dictionary<int, UpdateField> updates, AuraUpdate auraUpdate, PowerUpdate powerUpdate, bool isCreate, ObjectUpdate updateData)
+        public void StoreObjectUpdate(WowGuid128 guid, ObjectType objectType, BitArray updateMaskArray, Dictionary<int, UpdateField> updates, AuraUpdate auraUpdate, PowerUpdate powerUpdate, bool isCreate, ObjectUpdate updateData, BitArray actuallyChangedValuesMaskArray)
+        {
+            StoreObjectUpdateInternal(guid, objectType, updateMaskArray, updates, auraUpdate, powerUpdate, isCreate, updateData);
+            AfterStoreObjectUpdateHook(guid, objectType, updateMaskArray, updates, auraUpdate, powerUpdate, isCreate, updateData, actuallyChangedValuesMaskArray);
+        }
+
+        private void AfterStoreObjectUpdateHook(WowGuid128 guid, ObjectType objectType, BitArray updateMaskArray, Dictionary<int, UpdateField> updates, AuraUpdate auraUpdate, PowerUpdate powerUpdate, bool isCreate, ObjectUpdate updateData, BitArray changedValuesMask)
+        {
+            if (objectType == ObjectType.Player || objectType == ObjectType.ActivePlayer)
+            {
+                int UNIT_FIELD_NATIVEDISPLAYID = LegacyVersion.GetUpdateField(UnitField.UNIT_FIELD_NATIVEDISPLAYID);
+                int UNIT_FIELD_MOUNTDISPLAYID = LegacyVersion.GetUpdateField(UnitField.UNIT_FIELD_MOUNTDISPLAYID);
+                int OBJECT_FIELD_SCALE_X = LegacyVersion.GetUpdateField(ObjectField.OBJECT_FIELD_SCALE_X);
+                if (UNIT_FIELD_NATIVEDISPLAYID >= 0 && UNIT_FIELD_MOUNTDISPLAYID >= 0 && OBJECT_FIELD_SCALE_X >= 0)
+                {
+                    if (!changedValuesMask.Get(UNIT_FIELD_NATIVEDISPLAYID) && !changedValuesMask.Get(UNIT_FIELD_MOUNTDISPLAYID) && !changedValuesMask.Get(OBJECT_FIELD_SCALE_X))
+                        return; // No need for an update
+
+                    int nativeDisplayId = Session.GameState.GetLegacyFieldValueInt32(guid, UnitField.UNIT_FIELD_DISPLAYID);
+                    int mountDisplayId = Session.GameState.GetLegacyFieldValueInt32(guid, UnitField.UNIT_FIELD_MOUNTDISPLAYID);
+                    float rawScaleX = Session.GameState.GetLegacyFieldValueFloat(guid, ObjectField.OBJECT_FIELD_SCALE_X);
+
+                    if (rawScaleX == 0.0f)
+                        return;
+
+                    var regularNativeDisplaySize = GameData.GetUnitCompleteDisplayScale((uint)nativeDisplayId);
+                    var scale = rawScaleX / regularNativeDisplaySize;
+
+                    var ourDisplayInfo = GameData.GetDisplayInfo((uint)nativeDisplayId);
+                    var ourModel = GameData.GetModelData(ourDisplayInfo.ModelId);
+
+                    float calculatedBaseHeight;
+                    if (mountDisplayId != 0 && LegacyVersion.AddedInVersion(ClientVersionBuild.V2_0_1_6180))
+                    { // in vanilla there were no mount collisions
+                        var mountDisplayInfo = GameData.GetDisplayInfo((uint)mountDisplayId);
+                        var mountModel = GameData.GetModelData(mountDisplayInfo.ModelId);
+                        calculatedBaseHeight = mountModel.MountHeight * mountDisplayInfo.DisplayScale + (ourModel.Height * ourModel.ModelScale * ourDisplayInfo.DisplayScale * 0.5f);
+                    }
+                    else
+                    {
+                        calculatedBaseHeight = ourDisplayInfo.DisplayScale * ourModel.Height * ourModel.ModelScale;
+                    }
+
+                    if (calculatedBaseHeight == 0)
+                        calculatedBaseHeight = mountDisplayId != 0 ? PlayerHeight.Mounted : PlayerHeight.Normal;
+
+                    var heightScale = Math.Max(scale, regularNativeDisplaySize); // you HitBox cannot be smaller than displaySize in legacy clients
+                    var scaledHeight = heightScale * calculatedBaseHeight;
+
+                    var displayScale = regularNativeDisplaySize * scale;
+
+                    var reason = changedValuesMask.Get(UNIT_FIELD_MOUNTDISPLAYID)
+                        ? MoveSetCollisionHeight.UpdateCollisionHeightReason.Mount
+                        : MoveSetCollisionHeight.UpdateCollisionHeightReason.Force;
+
+                    MoveSetCollisionHeight height = new()
+                    {
+                        MoverGUID = guid,
+                        Height = scaledHeight,
+                        Scale = displayScale,
+                        Reason = reason,
+                        MountDisplayID = (uint) mountDisplayId,
+                    };
+                    SendPacketToClient(height, Opcode.SMSG_UPDATE_OBJECT);
+                }
+            }
+        }
+        
+        private void StoreObjectUpdateInternal(WowGuid128 guid, ObjectType objectType, BitArray updateMaskArray, Dictionary<int, UpdateField> updates, AuraUpdate auraUpdate, PowerUpdate powerUpdate, bool isCreate, ObjectUpdate updateData)
         {
             // Object Fields
             int OBJECT_FIELD_GUID = LegacyVersion.GetUpdateField(ObjectField.OBJECT_FIELD_GUID);
@@ -1605,7 +1684,7 @@ namespace HermesProxy.World.Client
                     // the server sends it by the default scale for this display id in the dbc
                     // this is not the case in 1.12, so we have to adjust the unit scale here
                     if (LegacyVersion.RemovedInVersion(ClientVersionBuild.V2_0_1_6180))
-                        updateData.UnitData.DisplayScale = 1.0f / GameData.GetUnitDisplayScale((uint)updateData.UnitData.DisplayID);
+                        updateData.UnitData.DisplayScale = 1.0f / GameData.GetUnitCompleteDisplayScale((uint)updateData.UnitData.DisplayID);
                 }
                 int UNIT_FIELD_NATIVEDISPLAYID = LegacyVersion.GetUpdateField(UnitField.UNIT_FIELD_NATIVEDISPLAYID);
                 if (UNIT_FIELD_NATIVEDISPLAYID >= 0 && updateMaskArray[UNIT_FIELD_NATIVEDISPLAYID])
@@ -1616,17 +1695,6 @@ namespace HermesProxy.World.Client
                 if (UNIT_FIELD_MOUNTDISPLAYID >= 0 && updateMaskArray[UNIT_FIELD_MOUNTDISPLAYID])
                 {
                     updateData.UnitData.MountDisplayID = updates[UNIT_FIELD_MOUNTDISPLAYID].Int32Value;
-
-                    if (!isCreate && guid == GetSession().GameState.CurrentPlayerGuid &&
-                        LegacyVersion.RemovedInVersion(ClientVersionBuild.V3_0_2_9056))
-                    {
-                        MoveSetCollisionHeight height = new();
-                        height.MoverGUID = guid;
-                        height.Height = updateData.UnitData.MountDisplayID != 0 ? 3.081099f : 2.438083f;
-                        height.MountDisplayID = (uint)updateData.UnitData.MountDisplayID;
-                        height.Reason = 1; // Mount
-                        SendPacketToClient(height);
-                    }
                 }
                 int UNIT_FIELD_MINDAMAGE = LegacyVersion.GetUpdateField(UnitField.UNIT_FIELD_MINDAMAGE);
                 if (UNIT_FIELD_MINDAMAGE >= 0 && updateMaskArray[UNIT_FIELD_MINDAMAGE])
@@ -1916,7 +1984,7 @@ namespace HermesProxy.World.Client
                                     aura.AuraData.Duration = durationFull;
                                     aura.AuraData.Remaining = durationLeft;
                                 }
-                                aura.AuraData.CastUnit = GetSession().GameState.GetAuraCaster(guid, i);
+                                aura.AuraData.CastUnit = GetSession().GameState.GetAuraCaster(guid, i, aura.AuraData.SpellID);
                             }
                             else if (updateMaskArray[UNIT_FIELD_AURA + i])
                             {
@@ -2715,21 +2783,43 @@ namespace HermesProxy.World.Client
                     // Fix for invalid movement of Deeprun Tram, some carts were going through the wall (in the opposite direction)
                     // Entry IDs of Trams:
                     const int tramSouthEastmost = 176080;
-                    const int tramNorthMiddle =   176081;
-                    const int tramSouthMiddle =   176082;
+                    const int tramNorthMiddle = 176081;
+                    const int tramSouthMiddle = 176082;
                     const int tramSouthWestmost = 176083;
                     const int tramNorthWestmost = 176084;
                     const int tramNorthEastmost = 176085;
+                    const int zangarmarshElevator = 183177;
 
-                    if (updateData.ObjectData.EntryID is tramSouthEastmost or tramNorthWestmost or tramNorthEastmost)
+                    switch (updateData.ObjectData.EntryID)
                     {
-                        var rot = updateData.CreateData.MoveInfo.Rotation.AsEulerAngles();
-                        rot.Yaw *= -1; // Rotate the cart content by 180°, so players who stand on the left side of the cart are actually on the left side
-                        updateData.CreateData.MoveInfo.Rotation = rot.AsQuaternion();
+                        case tramSouthEastmost:
+                        case tramNorthWestmost:
+                        case tramNorthEastmost:
+                        {
+                            var rot = updateData.CreateData.MoveInfo.Rotation.AsEulerAngles();
+                            rot.Yaw *= -1; // Rotate the cart content by 180°, so players who stand on the left side of the cart are actually on the left side
+                            updateData.CreateData.MoveInfo.Rotation = rot.AsQuaternion();
+                            break;
+                        }
                     }
-                    if (updateData.ObjectData.EntryID is tramNorthMiddle or tramSouthMiddle or tramSouthWestmost or tramNorthEastmost)
-                    {   // Quaternion to rotate the pivot point of the transport movement by 180°
-                        updateData.GameObjectData.ParentRotation = new float?[] { -4.371139E-08f, 0,  1, 0 };
+
+                    switch (updateData.ObjectData.EntryID)
+                    {
+                        case tramNorthMiddle:
+                        case tramSouthMiddle:
+                        case tramSouthWestmost:
+                        case tramNorthEastmost:
+                        {
+                            // Quaternion to rotate the pivot point of the transport movement by 180°
+                            updateData.GameObjectData.ParentRotation = new float?[] { -4.371139E-08f, 0, 1, 0 };
+                            break;
+                        }
+                        case zangarmarshElevator:
+                        {
+                            // Super weird angle -88°
+                            updateData.GameObjectData.ParentRotation = new float?[] { 0, 0, -0.69465846f, 0.7193397f };
+                            break;
+                        }
                     }
                 }
                 int GAMEOBJECT_STATE = LegacyVersion.GetUpdateField(GameObjectField.GAMEOBJECT_STATE);
@@ -2845,6 +2935,18 @@ namespace HermesProxy.World.Client
                 if (CORPSE_FIELD_FLAGS >= 0 && updateMaskArray[CORPSE_FIELD_FLAGS])
                 {
                     updateData.CorpseData.Flags = updates[CORPSE_FIELD_FLAGS].UInt32Value;
+
+                    // These flags have a different meaning in modern client.
+                    if (updateData.CorpseData.Flags.HasAnyFlag(CorpseFlags.HideHelm))
+                    {
+                        updateData.CorpseData.Flags &= ~(uint)CorpseFlags.HideHelm;
+                        updateData.CorpseData.Items[EquipmentSlot.Head] = null;
+                    }
+                    if (updateData.CorpseData.Flags.HasAnyFlag(CorpseFlags.HideCloak))
+                    {
+                        updateData.CorpseData.Flags &= ~(uint)CorpseFlags.HideCloak;
+                        updateData.CorpseData.Items[EquipmentSlot.Cloak] = null;
+                    }
                 }
                 int CORPSE_FIELD_DYNAMIC_FLAGS = LegacyVersion.GetUpdateField(CorpseField.CORPSE_FIELD_DYNAMIC_FLAGS);
                 if (CORPSE_FIELD_DYNAMIC_FLAGS >= 0 && updateMaskArray[CORPSE_FIELD_DYNAMIC_FLAGS])

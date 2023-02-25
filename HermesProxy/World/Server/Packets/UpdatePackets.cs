@@ -125,10 +125,6 @@ namespace HermesProxy.World.Server.Packets
                     CreateData.MoveInfo.Flags &= ~(uint)MovementFlagModern.WalkMode;
                 if (CreateData.MoveInfo.FlagsExtra == 0)
                     CreateData.MoveInfo.FlagsExtra = 512;
-                if (CreateData.MoveInfo.Orientation < 0)
-                    CreateData.MoveInfo.Orientation += (float)(Math.PI * 2f);
-                if (CreateData.MoveInfo.Orientation > (float)(Math.PI * 2f))
-                    CreateData.MoveInfo.Orientation -= (float)(Math.PI * 2f);
             }
             if (CreateData.MoveSpline != null)
             {
@@ -167,6 +163,14 @@ namespace HermesProxy.World.Server.Packets
                         CorpseData.ClassId = (byte)GlobalSession.GameState.GetUnitClass(CorpseData.Owner);
                     else
                         CorpseData.ClassId = 1;
+                }
+                if (CorpseData.FactionTemplate == null && CorpseData.Owner != null)
+                {
+                    int ownerFaction = GlobalSession.GameState.GetLegacyFieldValueInt32(CorpseData.Owner, UnitField.UNIT_FIELD_FACTIONTEMPLATE);
+                    if (ownerFaction != 0)
+                        CorpseData.FactionTemplate = ownerFaction;
+                    else if (CorpseData.RaceId != null)
+                        CorpseData.FactionTemplate = (int)GameData.GetFactionForRace((uint)CorpseData.RaceId);
                 }
             }
             if (UnitData != null)
@@ -316,6 +320,12 @@ namespace HermesProxy.World.Server.Packets
                         builder.WriteToPacket(data);
                         break;
                     }
+                    case ClientVersionBuild.V2_5_3_41750:
+                    {
+                        Objects.Version.V2_5_3_41750.ObjectUpdateBuilder builder = new Objects.Version.V2_5_3_41750.ObjectUpdateBuilder(update, _gameState);
+                        builder.WriteToPacket(data);
+                        break;
+                    }
                     default:
                         throw new System.ArgumentOutOfRangeException("No object update builder defined for current build.");
                 }
@@ -372,5 +382,17 @@ namespace HermesProxy.World.Server.Packets
 
         public int Power;
         public byte PowerType;
+    }
+
+    public class ObjectUpdateFailed : ClientPacket
+    {
+        public ObjectUpdateFailed(WorldPacket packet) : base(packet) { }
+
+        public override void Read()
+        {
+            ObjectGuid = _worldPacket.ReadPackedGuid128();
+        }
+
+        public WowGuid128 ObjectGuid;
     }
 }

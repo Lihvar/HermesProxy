@@ -106,6 +106,16 @@ namespace HermesProxy.World
             return false;
         }
 
+        public static WowGuid64 ConvertUniqGuid(WowGuid128 guid)
+        {
+            switch ((UniqGuid)guid.GetLowValue())
+            {
+                case UniqGuid.SpellTargetTradeItem:
+                    return new WowGuid64((ulong)TradeSlots.NonTraded);
+            }
+            return WowGuid64.Empty;
+        }
+
         public static bool operator ==(WowGuid first, WowGuid other)
         {
             if (ReferenceEquals(first, other))
@@ -148,6 +158,9 @@ namespace HermesProxy.World
 
     public class WowGuid128 : WowGuid
     {
+        private const ulong UNKNOWN_TMP_GUID_START = 10_000_000_000;
+        private static ulong _nextUnknownTmpGuid = UNKNOWN_TMP_GUID_START;
+
         public static WowGuid128 Empty = new WowGuid128();
 
         public WowGuid128()
@@ -234,6 +247,16 @@ namespace HermesProxy.World
         public static WowGuid128 CreateLootGuid(HighGuidTypeLegacy type, uint entry, ulong counter)
         {
             return MapSpecificCreate(HighGuidType703.LootObject, 0, 0, (uint)type, entry, counter);
+        }
+
+        public static WowGuid128 CreateUnknownPlayerGuid()
+        {
+            return Create(HighGuidType703.Player, _nextUnknownTmpGuid++);
+        }
+
+        public static bool IsUnknownPlayerGuid(WowGuid128 playerGuid)
+        {
+            return playerGuid.IsPlayer() && playerGuid.GetCounter() >= UNKNOWN_TMP_GUID_START;
         }
 
         static WowGuid128 GlobalCreate(HighGuidType703 type, ulong counter)
@@ -361,6 +384,8 @@ namespace HermesProxy.World
         {
             switch (guid.GetHighType())
             {
+                case HighGuidType.Uniq:
+                    return ConvertUniqGuid(guid);
                 case HighGuidType.Player:
                     return new WowGuid64(HighGuidTypeLegacy.Player, (uint)guid.GetCounter());
                 case HighGuidType.Item:

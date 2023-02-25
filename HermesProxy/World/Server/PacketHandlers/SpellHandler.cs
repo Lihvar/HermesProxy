@@ -1,10 +1,13 @@
-﻿using Framework.Constants;
+﻿using Framework;
+using Framework.Constants;
 using HermesProxy.Enums;
 using HermesProxy.World;
 using HermesProxy.World.Enums;
 using HermesProxy.World.Objects;
 using HermesProxy.World.Server.Packets;
 using System;
+using System.Threading;
+using Framework.Logging;
 
 namespace HermesProxy.World.Server
 {
@@ -53,7 +56,10 @@ namespace HermesProxy.World.Server
                 SpellCastTargetFlags.CorpseAlly | SpellCastTargetFlags.UnitMinipet))
                 packet.WritePackedGuid(target.Unit.To64());
 
-            if (targetFlags.HasAnyFlag(SpellCastTargetFlags.Item | SpellCastTargetFlags.TradeItem))
+            // Check if the user wants to target the "Will not be traded" slot
+            if (targetFlags.HasFlag(SpellCastTargetFlags.TradeItem) && target.Item == WowGuid128.Create(HighGuidType703.Uniq, 10))
+                packet.WritePackedGuid(new WowGuid64((ulong) TradeSlots.NonTraded));
+            else if (targetFlags.HasFlag(SpellCastTargetFlags.Item))
                 packet.WritePackedGuid(target.Item.To64());
 
             if (targetFlags.HasAnyFlag(SpellCastTargetFlags.SourceLocation))
@@ -104,6 +110,11 @@ namespace HermesProxy.World.Server
         [PacketHandler(Opcode.CMSG_CAST_SPELL)]
         void HandleCastSpell(CastSpell cast)
         {
+            // Artificial lag is needed for spell packets,
+            // or spells will bug out and glow if spammed.
+            if (Settings.ServerSpellDelay > 0)
+                Thread.Sleep(Settings.ServerSpellDelay);
+
             if (GameData.NextMeleeSpells.Contains(cast.Cast.SpellID) ||
                 GameData.AutoRepeatSpells.Contains(cast.Cast.SpellID))
             {
@@ -148,8 +159,11 @@ namespace HermesProxy.World.Server
                     }
                     else
                     {
+                        // Sometimes we dont clear the CurrentCast when we dont get the correct SMSG_SPELL_GO
                         if (GetSession().GameState.CurrentClientNormalCast.Timestamp + 10000 < castRequest.Timestamp)
                         {
+                            Log.Print(LogType.Warn, $"Clearing CurrentClientNormalCast because of 10 sec timeout! (oldSpell:{GetSession().GameState.CurrentClientNormalCast.SpellId} newSpell:{castRequest.SpellId})");
+                            Log.Print(LogType.Warn, "Are you playing on a server with another patch?");
                             SendCastRequestFailed(GetSession().GameState.CurrentClientNormalCast, false);
                             GetSession().GameState.CurrentClientNormalCast = null;
                             foreach (var pending in GetSession().GameState.PendingClientCasts)
@@ -190,6 +204,11 @@ namespace HermesProxy.World.Server
         [PacketHandler(Opcode.CMSG_PET_CAST_SPELL)]
         void HandlePetCastSpell(PetCastSpell cast)
         {
+            // Artificial lag is needed for spell packets,
+            // or spells will bug out and glow if spammed.
+            if (Settings.ServerSpellDelay > 0)
+                Thread.Sleep(Settings.ServerSpellDelay);
+
             ClientCastRequest castRequest = new ClientCastRequest();
             castRequest.Timestamp = Environment.TickCount;
             castRequest.SpellId = cast.Cast.SpellID;
@@ -205,8 +224,10 @@ namespace HermesProxy.World.Server
                 }
                 else
                 {
+                    // Sometimes we dont clear the CurrentCast when we dont get the correct SMSG_SPELL_GO
                     if (GetSession().GameState.CurrentClientPetCast.Timestamp + 10000 < castRequest.Timestamp)
                     {
+                        Log.Print(LogType.Warn, $"Clearing CurrentClientPetCast because of 10 sec timeout! (oldSpell:{GetSession().GameState.CurrentClientPetCast.SpellId} newSpell:{castRequest.SpellId})");
                         SendCastRequestFailed(GetSession().GameState.CurrentClientPetCast, true);
                         GetSession().GameState.CurrentClientPetCast = null;
                         foreach (var pending in GetSession().GameState.PendingClientPetCasts)
@@ -237,6 +258,11 @@ namespace HermesProxy.World.Server
         [PacketHandler(Opcode.CMSG_USE_ITEM)]
         void HandleUseItem(UseItem use)
         {
+            // Artificial lag is needed for spell packets,
+            // or spells will bug out and glow if spammed.
+            if (Settings.ServerSpellDelay > 0)
+                Thread.Sleep(Settings.ServerSpellDelay);
+
             ClientCastRequest castRequest = new ClientCastRequest();
             castRequest.Timestamp = Environment.TickCount;
             castRequest.SpellId = use.Cast.SpellID;
@@ -253,8 +279,10 @@ namespace HermesProxy.World.Server
                 }
                 else
                 {
+                    // Sometimes we dont clear the CurrentCast when we dont get the correct SMSG_SPELL_GO
                     if (GetSession().GameState.CurrentClientNormalCast.Timestamp + 10000 < castRequest.Timestamp)
                     {
+                        Log.Print(LogType.Warn, $"Clearing CurrentClientNormalCast because of 10 sec timeout! (oldSpell:{GetSession().GameState.CurrentClientNormalCast.SpellId} newSpell:{castRequest.SpellId})");
                         SendCastRequestFailed(GetSession().GameState.CurrentClientNormalCast, false);
                         GetSession().GameState.CurrentClientNormalCast = null;
                         foreach (var pending in GetSession().GameState.PendingClientCasts)
@@ -288,6 +316,11 @@ namespace HermesProxy.World.Server
         [PacketHandler(Opcode.CMSG_CANCEL_CAST)]
         void HandleCancelCast(CancelCast cast)
         {
+            // Artificial lag is needed for spell packets,
+            // or spells will bug out and glow if spammed.
+            if (Settings.ServerSpellDelay > 0)
+                Thread.Sleep(Settings.ServerSpellDelay);
+
             WorldPacket packet = new WorldPacket(Opcode.CMSG_CANCEL_CAST);
             if (LegacyVersion.AddedInVersion(ClientVersionBuild.V3_0_2_9056))
                 packet.WriteUInt8(0);
@@ -297,8 +330,24 @@ namespace HermesProxy.World.Server
         [PacketHandler(Opcode.CMSG_CANCEL_CHANNELLING)]
         void HandleCancelChannelling(CancelChannelling cast)
         {
+            // Artificial lag is needed for spell packets,
+            // or spells will bug out and glow if spammed.
+            if (Settings.ServerSpellDelay > 0)
+                Thread.Sleep(Settings.ServerSpellDelay);
+
             WorldPacket packet = new WorldPacket(Opcode.CMSG_CANCEL_CHANNELLING);
             packet.WriteInt32(cast.SpellID);
+            SendPacketToServer(packet);
+        }
+        [PacketHandler(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL)]
+        void HandleCancelAutoRepeatSpell(CancelAutoRepeatSpell spell)
+        {
+            // Artificial lag is needed for spell packets,
+            // or spells will bug out and glow if spammed.
+            if (Settings.ServerSpellDelay > 0)
+                Thread.Sleep(Settings.ServerSpellDelay);
+
+            WorldPacket packet = new WorldPacket(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL);
             SendPacketToServer(packet);
         }
         [PacketHandler(Opcode.CMSG_CANCEL_AURA)]
@@ -337,12 +386,6 @@ namespace HermesProxy.World.Server
                     }
                 }
             }
-        }
-        [PacketHandler(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL)]
-        void HandleCancelAutoRepeatSpell(CancelAutoRepeatSpell aura)
-        {
-            WorldPacket packet = new WorldPacket(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL);
-            SendPacketToServer(packet);
         }
         [PacketHandler(Opcode.CMSG_LEARN_TALENT)]
         void HandleLearnTalent(LearnTalent talent)

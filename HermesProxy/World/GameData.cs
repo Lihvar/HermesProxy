@@ -25,14 +25,18 @@ namespace HermesProxy.World
         public static Dictionary<uint, uint> LearnSpells = new Dictionary<uint, uint>();
         public static Dictionary<uint, uint> TotemSpells = new Dictionary<uint, uint>();
         public static Dictionary<uint, uint> Gems = new Dictionary<uint, uint>();
-        public static Dictionary<uint, float> UnitDisplayScales = new Dictionary<uint, float>();
+        public static Dictionary<uint, CreatureDisplayInfo> CreatureDisplayInfos = new Dictionary<uint, CreatureDisplayInfo>();
+        public static Dictionary<uint, CreatureModelCollisionHeight> CreatureModelCollisionHeights = new Dictionary<uint, CreatureModelCollisionHeight>();
         public static Dictionary<uint, uint> TransportPeriods = new Dictionary<uint, uint>();
         public static Dictionary<uint, string> AreaNames = new Dictionary<uint, string>();
+        public static Dictionary<uint, uint> RaceFaction = new Dictionary<uint, uint>();
         public static HashSet<uint> DispellSpells = new HashSet<uint>();
+        public static Dictionary<uint, List<float>> SpellEffectPoints = new();
         public static HashSet<uint> StackableAuras = new HashSet<uint>();
         public static HashSet<uint> MountAuras = new HashSet<uint>();
         public static HashSet<uint> NextMeleeSpells = new HashSet<uint>();
         public static HashSet<uint> AutoRepeatSpells = new HashSet<uint>();
+        public static HashSet<uint> AuraSpells = new HashSet<uint>();
         public static Dictionary<uint, TaxiPath> TaxiPaths = new Dictionary<uint, TaxiPath>();
         public static int[,] TaxiNodesGraph = new int[250,250];
         public static Dictionary<uint /*questId*/, uint /*questBit*/> QuestBits = new Dictionary<uint, uint>();
@@ -228,12 +232,28 @@ namespace HermesProxy.World
             return 0;
         }
 
-        public static float GetUnitDisplayScale(uint displayId)
+        public static float GetUnitCompleteDisplayScale(uint displayId)
         {
-            float scale;
-            if (UnitDisplayScales.TryGetValue(displayId, out scale))
-                return scale;
-            return 1.0f;
+            var displayData = GetDisplayInfo(displayId);
+            if (displayData.ModelId == 0)
+                return 1.0f;
+
+            var modelData = GetModelData(displayId);
+            return displayData.DisplayScale * modelData.ModelScale;
+        }
+        
+        public static CreatureDisplayInfo GetDisplayInfo(uint displayId)
+        {
+            if (CreatureDisplayInfos.TryGetValue(displayId, out var info))
+                return info;
+            return new CreatureDisplayInfo(0, 1.0f);
+        }
+
+        public static CreatureModelCollisionHeight GetModelData(uint modelId)
+        {
+            if (CreatureModelCollisionHeights.TryGetValue(modelId, out var info))
+                return info;
+            return new CreatureModelCollisionHeight(1.0f, 0, 0);
         }
 
         public static uint GetTransportPeriod(uint entry)
@@ -250,6 +270,14 @@ namespace HermesProxy.World
             if (AreaNames.TryGetValue(id, out name))
                 return name;
             return "";
+        }
+
+        public static uint GetFactionForRace(uint race)
+        {
+            uint faction;
+            if (RaceFaction.TryGetValue(race, out faction))
+                return faction;
+            return 1;
         }
 
         public static uint GetBattlegroundIdFromMapId(uint mapId)
@@ -306,6 +334,31 @@ namespace HermesProxy.World
             return false;
         }
 
+        public static bool IsHordeRace(Race raceId)
+        {
+            switch (raceId)
+            {
+                case Race.Orc:
+                case Race.Undead:
+                case Race.Tauren:
+                case Race.Troll:
+                case Race.BloodElf:
+                case Race.Goblin:
+                    return true;
+            }
+            return false;
+        }
+
+        /// returns 0 when unknown
+        public static int GetFactionByRace(Race race)
+        {
+            if (IsAllianceRace(race))
+                return 1;
+            if (IsHordeRace(race)) 
+                return 2;
+            return 0;
+        }
+
         public static BroadcastText GetBroadcastText(uint entry)
         {
             BroadcastText data;
@@ -353,14 +406,18 @@ namespace HermesProxy.World
             LoadLearnSpells();
             LoadTotemSpells();
             LoadGems();
-            LoadUnitDisplayScales();
+            LoadCreatureDisplayInfo();
+            LoadCreatureModelCollisionHeights();
             LoadTransports();
             LoadAreaNames();
+            LoadRaceFaction();
             LoadDispellSpells();
+            LoadSpellEffectPoints();
             LoadStackableAuras();
             LoadMountAuras();
             LoadMeleeSpells();
             LoadAutoRepeatSpells();
+            LoadAuraSpells();
             LoadTaxiPaths();
             LoadTaxiPathNodesGraph();
             LoadQuestBits();
@@ -612,12 +669,9 @@ namespace HermesProxy.World
             }
         }
 
-        public static void LoadUnitDisplayScales()
+        public static void LoadCreatureDisplayInfo()
         {
-            if (LegacyVersion.ExpansionVersion > 1)
-                return;
-
-            var path = Path.Combine("CSV", "UnitDisplayScales.csv");
+            var path = Path.Combine("CSV", "CreatureDisplayInfo.csv");
             using (TextFieldParser csvParser = new TextFieldParser(path))
             {
                 csvParser.CommentTokens = new string[] { "#" };
@@ -633,8 +687,35 @@ namespace HermesProxy.World
                     string[] fields = csvParser.ReadFields();
 
                     uint displayId = UInt32.Parse(fields[0]);
-                    float scale = Single.Parse(fields[1]);
-                    UnitDisplayScales.Add(displayId, scale);
+                    uint modelId = UInt32.Parse(fields[1]);
+                    float scale = Single.Parse(fields[2]);
+                    CreatureDisplayInfos.Add(displayId, new CreatureDisplayInfo(modelId, scale));
+                }
+            }
+        }
+
+        public static void LoadCreatureModelCollisionHeights()
+        {
+            var path = Path.Combine("CSV", $"CreatureModelCollisionHeightsModern{LegacyVersion.ExpansionVersion}.csv");
+            using (TextFieldParser csvParser = new TextFieldParser(path))
+            {
+                csvParser.CommentTokens = new string[] { "#" };
+                csvParser.SetDelimiters(new string[] { "," });
+                csvParser.HasFieldsEnclosedInQuotes = false;
+
+                // Skip the row with the column names
+                csvParser.ReadLine();
+
+                while (!csvParser.EndOfData)
+                {
+                    // Read current line fields, pointer moves to the next line.
+                    string[] fields = csvParser.ReadFields();
+
+                    uint modelId = UInt32.Parse(fields[0]);
+                    float modelScale = Single.Parse(fields[1]);
+                    float collisionHeight = Single.Parse(fields[2]);
+                    float collisionHeightMounted = Single.Parse(fields[3]);
+                    CreatureModelCollisionHeights.Add(modelId, new CreatureModelCollisionHeight(modelScale, collisionHeight, collisionHeightMounted));
                 }
             }
         }
@@ -687,6 +768,30 @@ namespace HermesProxy.World
             }
         }
 
+        public static void LoadRaceFaction()
+        {
+            var path = Path.Combine("CSV", $"RaceFaction.csv");
+            using (TextFieldParser csvParser = new TextFieldParser(path))
+            {
+                csvParser.CommentTokens = new string[] { "#" };
+                csvParser.SetDelimiters(new string[] { "," });
+                csvParser.HasFieldsEnclosedInQuotes = false;
+
+                // Skip the row with the column names
+                csvParser.ReadLine();
+
+                while (!csvParser.EndOfData)
+                {
+                    // Read current line fields, pointer moves to the next line.
+                    string[] fields = csvParser.ReadFields();
+
+                    uint id = UInt32.Parse(fields[0]);
+                    uint faction = UInt32.Parse(fields[1]);
+                    RaceFaction.Add(id, faction);
+                }
+            }
+        }
+
         public static void LoadDispellSpells()
         {
             if (LegacyVersion.ExpansionVersion > 1)
@@ -709,6 +814,43 @@ namespace HermesProxy.World
 
                     uint spellId = UInt32.Parse(fields[0]);
                     DispellSpells.Add(spellId);
+                }
+            }
+        }
+
+        public static void LoadSpellEffectPoints()
+        {
+            var path = Path.Combine("CSV", $"SpellEffectPoints{LegacyVersion.ExpansionVersion}.csv");
+            using (TextFieldParser csvParser = new TextFieldParser(path))
+            {
+                csvParser.CommentTokens = new string[] { "#" };
+                csvParser.SetDelimiters(new string[] { "," });
+                csvParser.HasFieldsEnclosedInQuotes = false;
+
+                // Skip the row with the column names
+                csvParser.ReadLine();
+
+                while (!csvParser.EndOfData)
+                {
+                    // Read current line fields, pointer moves to the next line.
+                    string[] fields = csvParser.ReadFields();
+
+                    uint spellId = UInt32.Parse(fields[0]);
+
+                    // Those basePoints are usually incremented by 1, only few test spell have another value there (baseDice)
+                    int basePointsEff1 = int.Parse(fields[2]);
+                    if (basePointsEff1 != 0)
+                        basePointsEff1 += 1;
+
+                    int basePointsEff2 = int.Parse(fields[3]);
+                    if (basePointsEff2 != 0)
+                        basePointsEff2 += 1;
+
+                    int basePointsEff3 = int.Parse(fields[4]);
+                    if (basePointsEff3 != 0)
+                        basePointsEff3 += 1;
+
+                    SpellEffectPoints.Add(spellId, new List<float>{ basePointsEff1, basePointsEff2, basePointsEff3 });
                 }
             }
         }
@@ -807,6 +949,28 @@ namespace HermesProxy.World
 
                     uint spellId = UInt32.Parse(fields[0]);
                     AutoRepeatSpells.Add(spellId);
+                }
+            }
+        }
+        public static void LoadAuraSpells()
+        {
+            var path = Path.Combine("CSV", $"AuraSpells{LegacyVersion.ExpansionVersion}.csv");
+            using (TextFieldParser csvParser = new TextFieldParser(path))
+            {
+                csvParser.CommentTokens = new string[] { "#" };
+                csvParser.SetDelimiters(new string[] { "," });
+                csvParser.HasFieldsEnclosedInQuotes = false;
+
+                // Skip the row with the column names
+                csvParser.ReadLine();
+
+                while (!csvParser.EndOfData)
+                {
+                    // Read current line fields, pointer moves to the next line.
+                    string[] fields = csvParser.ReadFields();
+
+                    uint spellId = UInt32.Parse(fields[0]);
+                    AuraSpells.Add(spellId);
                 }
             }
         }
@@ -1005,6 +1169,7 @@ namespace HermesProxy.World
         public const uint HotfixCreatureDisplayInfoBegin = 220000;
         public const uint HotfixCreatureDisplayInfoExtraBegin = 230000;
         public const uint HotfixCreatureDisplayInfoOptionBegin = 240000;
+        public const uint HotfixItemEffectBegin = 250000;
         public static Dictionary<uint, HotfixRecord> Hotfixes = new Dictionary<uint, HotfixRecord>();
         public static void LoadHotfixes()
         {
@@ -1023,6 +1188,7 @@ namespace HermesProxy.World
             LoadCreatureDisplayInfoHotfixes();
             LoadCreatureDisplayInfoExtraHotfixes();
             LoadCreatureDisplayInfoOptionHotfixes();
+            LoadItemEffectHotfixes();
         }
         
         public static void LoadAreaTriggerHotfixes()
@@ -2142,6 +2308,56 @@ namespace HermesProxy.World
                 }
             }
         }
+        public static void LoadItemEffectHotfixes()
+        {
+            var path = Path.Combine("CSV", "Hotfix", $"ItemEffect{ModernVersion.ExpansionVersion}.csv");
+            using (TextFieldParser csvParser = new TextFieldParser(path))
+            {
+                csvParser.CommentTokens = new string[] { "#" };
+                csvParser.SetDelimiters(new string[] { "," });
+                csvParser.HasFieldsEnclosedInQuotes = false;
+
+                // Skip the row with the column names
+                csvParser.ReadLine();
+
+                uint counter = 0;
+                while (!csvParser.EndOfData)
+                {
+                    counter++;
+
+                    // Read current line fields, pointer moves to the next line.
+                    string[] fields = csvParser.ReadFields();
+
+                    uint id = uint.Parse(fields[0]);
+                    byte legacySlotIndex = byte.Parse(fields[1]);
+                    byte triggerType = byte.Parse(fields[2]);
+                    short charges = short.Parse(fields[3]);
+                    int coolDownMSec = int.Parse(fields[4]);
+                    int categoryCoolDownMSec = int.Parse(fields[5]);
+                    short spellCategoryId = short.Parse(fields[6]);
+                    int spellId = int.Parse(fields[7]);
+                    short chrSpecializationId = short.Parse(fields[8]);
+                    int parentItemId = int.Parse(fields[9]);
+
+                    HotfixRecord record = new HotfixRecord();
+                    record.Status = HotfixStatus.Valid;
+                    record.TableHash = DB2Hash.ItemEffect;
+                    record.HotfixId = HotfixItemEffectBegin + counter;
+                    record.UniqueId = record.HotfixId;
+                    record.RecordId = id;
+                    record.HotfixContent.WriteUInt8(legacySlotIndex);
+                    record.HotfixContent.WriteUInt8(triggerType);
+                    record.HotfixContent.WriteInt16(charges);
+                    record.HotfixContent.WriteInt32(coolDownMSec);
+                    record.HotfixContent.WriteInt32(categoryCoolDownMSec);
+                    record.HotfixContent.WriteInt16(spellCategoryId);
+                    record.HotfixContent.WriteInt32(spellId);
+                    record.HotfixContent.WriteInt16(chrSpecializationId);
+                    record.HotfixContent.WriteInt32(parentItemId);
+                    Hotfixes.Add(record.HotfixId, record);
+                }
+            }
+        }
         #endregion
     }
 
@@ -2195,6 +2411,9 @@ namespace HermesProxy.World
         public ChannelFlags Flags;
         public string Name;
     }
+
+    public record CreatureDisplayInfo(uint ModelId, float DisplayScale);
+    public record CreatureModelCollisionHeight(float ModelScale, float Height, float MountHeight);
 
     // Hotfix structures
     public class AreaTrigger

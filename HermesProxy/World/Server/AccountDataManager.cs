@@ -46,9 +46,6 @@ namespace HermesProxy.World.Server
 
         public (string realmName, string charName, ulong charLowerGuid, long lastLoginUnixSec)? GetLastSelectedCharacter()
         {
-            if (!Settings.RememberLastCharacter)
-                return null;
-
             var path = Path.Combine(GetAccountMetaDataDirectory(), LAST_CHARACTER_FILE);
             if (!File.Exists(path))
                 return null;
@@ -66,14 +63,23 @@ namespace HermesProxy.World.Server
 
         public void SaveLastSelectedCharacter(string realmName, string charName, ulong charLowerGuid, long lastLoginUnixSec)
         {
-            if (!Settings.RememberLastCharacter)
-                return;
-
             var dir = GetAccountMetaDataDirectory();
             var path = Path.Combine(dir, LAST_CHARACTER_FILE);
 
             File.WriteAllText(path, $"{realmName},{charName},{charLowerGuid},{lastLoginUnixSec}", Encoding.UTF8);
             Log.Print(LogType.Debug, $"Saved last selected char in '{path}'");
+        }
+
+        public void InvalidateLastSelectedCharacter()
+        {
+            var dir = GetAccountMetaDataDirectory();
+            var path = Path.Combine(dir, LAST_CHARACTER_FILE);
+
+            if (!File.Exists(path))
+                return;
+
+            File.WriteAllText(path, "");
+            Log.Print(LogType.Debug, $"Invalidated last selected character entry in '{path}'");
         }
 
         public List<uint> GetAllCompletedQuests(string realmName, string charName)

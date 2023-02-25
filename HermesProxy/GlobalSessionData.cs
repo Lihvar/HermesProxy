@@ -6,18 +6,20 @@ using HermesProxy.World.Objects;
 using HermesProxy.World.Server;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Framework.Realm;
+using HermesProxy.World.Server.Packets;
 using ArenaTeamInspectData = HermesProxy.World.Server.Packets.ArenaTeamInspectData;
 
 namespace HermesProxy
 {
     public class PlayerCache
     {
-        public string Name;
-        public Race RaceId;
-        public Class ClassId;
-        public Gender SexId;
-        public byte Level;
+        public string? Name;
+        public Race RaceId = Race.None;
+        public Class ClassId = Class.None;
+        public Gender SexId = Gender.None;
+        public byte Level = 0;
     }
 
     public class OwnCharacterInfo : PlayerCache
@@ -26,6 +28,18 @@ namespace HermesProxy
         public WowGuid128 CharacterGuid;
         public Realm Realm;
         public ulong LastLoginUnixSec;
+    }
+
+    public class TradeSession
+    {
+        public static uint GlobalTradeIdCounter; // Fallback for pre 2.0.0 servers
+        public uint TradeId;
+
+        public WowGuid128 Partner;
+        public WowGuid128 PartnerAccount;
+
+        public uint ClientStateIndex = 1; // incremented for every update on our side
+        public uint ServerStateIndex = 1; // incremented by any trade action
     }
 
     public class GameSessionData
@@ -38,8 +52,10 @@ namespace HermesProxy
         public bool IsInTaxiFlight;
         public bool IsWaitingForTaxiStart;
         public bool IsWaitingForNewWorld;
+        public bool IsWaitingForWorldPortAck;
         public bool IsFirstEnterWorld;
         public bool IsConnectedToInstance;
+        public Queue<ServerPacket> PendingUninstancedPackets = new(); // Here packets are queued while IsConnectedToInstance = false;
         public bool IsInWorld;
         public uint? CurrentMapId;
         public uint CurrentZoneId;
@@ -53,6 +69,8 @@ namespace HermesProxy
         public int GroupUpdateCounter;
         public uint GroupReadyCheckResponses;
         public World.Server.Packets.PartyUpdate[] CurrentGroups = new World.Server.Packets.PartyUpdate[2];
+        public bool WeWantToLeaveGroup; // Only send kick message when we dont initiated the group-leave
+        public List<OwnCharacterInfo> OwnCharacters = new();
         public WowGuid128 CurrentPlayerGuid;
         public long CurrentPlayerCreateTime;
         public OwnCharacterInfo CurrentPlayerInfo;
@@ -76,6 +94,7 @@ namespace HermesProxy
         public Dictionary<WowGuid128, Dictionary<byte, int>> UnitAuraDurationFull = new();
         public Dictionary<WowGuid128, Dictionary<byte, WowGuid128>> UnitAuraCaster = new();
         public Dictionary<WowGuid128, PlayerCache> CachedPlayers = new();
+        public HashSet<WowGuid128> IgnoredPlayers = new();
         public Dictionary<WowGuid128, uint> PlayerGuildIds = new();
         public System.Threading.Mutex ObjectCacheMutex = new System.Threading.Mutex();
         public Dictionary<WowGuid128, Dictionary<int, UpdateField>> ObjectCacheLegacy = new();
@@ -83,7 +102,6 @@ namespace HermesProxy
         public Dictionary<WowGuid128, ObjectType> OriginalObjectTypes = new();
         public Dictionary<WowGuid128, uint[]> ItemGems = new();
         public Dictionary<uint, Class> CreatureClasses = new();
-        public List<OwnCharacterInfo> OwnCharacters = new();
         public Dictionary<string, int> ChannelIds = new();
         public Dictionary<uint, uint> ItemBuyCount = new();
         public Dictionary<uint, uint> RealSpellToLearnSpell = new();
@@ -102,6 +120,8 @@ namespace HermesProxy
         public HashSet<string> AddonPrefixes = new HashSet<string>();
         public Dictionary<byte, Dictionary<byte, int>> FlatSpellMods = new Dictionary<byte, Dictionary<byte, int>>();
         public Dictionary<byte, Dictionary<byte, int>> PctSpellMods = new Dictionary<byte, Dictionary<byte, int>>();
+        public Dictionary<WowGuid128, Dictionary<uint, WowGuid128>> LastAuraCasterOnTarget = new Dictionary<WowGuid128, Dictionary<uint, WowGuid128>>();
+        public TradeSession? CurrentTrade = null;
 
         private GameSessionData()
         {
@@ -438,6 +458,49 @@ namespace HermesProxy
             if (UnitAuraCaster.ContainsKey(target) &&
                 UnitAuraCaster[target].ContainsKey(slot))
                 return UnitAuraCaster[target][slot];
+
+            return null;
+        }
+        public WowGuid128 GetAuraCaster(WowGuid128 target, byte slot, uint spellId)
+        {
+            WowGuid128 caster = GetAuraCaster(target, slot);
+            if (caster == null)
+            {
+                caster = GetLastAuraCasterOnTarget(target, spellId);
+                if (caster != null)
+                    StoreAuraCaster(target, slot, caster);
+            }
+
+            return caster;
+        }
+        public void StoreLastAuraCasterOnTarget(WowGuid128 target, uint spellId, WowGuid128 caster)
+        {
+            if (LastAuraCasterOnTarget.ContainsKey(target))
+            {
+                if (LastAuraCasterOnTarget[target].ContainsKey(spellId))
+                    LastAuraCasterOnTarget[target][spellId] = caster;
+                else
+                    LastAuraCasterOnTarget[target].Add(spellId, caster);
+            }
+            else
+            {
+                Dictionary<uint, WowGuid128> casterDict = new Dictionary<uint, WowGuid128>();
+                casterDict.Add(spellId, caster);
+                LastAuraCasterOnTarget.Add(target, casterDict);
+            }
+        }
+        public WowGuid128 GetLastAuraCasterOnTarget(WowGuid128 target, uint spellId)
+        {
+            if (LastAuraCasterOnTarget.ContainsKey(target))
+            {
+                WowGuid128 caster;
+                if (LastAuraCasterOnTarget[target].TryGetValue(spellId, out caster))
+                {
+                    LastAuraCasterOnTarget[target].Remove(spellId);
+                    return caster;
+                }
+            }
+            
             return null;
         }
         public void StorePlayerGuildId(WowGuid128 guid, uint guildId)
@@ -567,12 +630,12 @@ namespace HermesProxy
             return "";
         }
 
-        public WowGuid128 GetPlayerGuidByName(string name)
+        public WowGuid128? GetPlayerGuidByName(string name)
         {
             name = name.Trim().Replace("\0", "");
             foreach (var player in CachedPlayers)
             {
-                if (player.Value.Name == name)
+                if (player.Value.Name == name && !WowGuid128.IsUnknownPlayerGuid(player.Key))
                     return player.Key;
             }
             return null;
@@ -790,7 +853,7 @@ namespace HermesProxy
         public WowGuid128 GetGameAccountGuidForPlayer(WowGuid128 playerGuid)
         {
             if (GameState.OwnCharacters.Any(own => own.CharacterGuid == playerGuid))
-                return GameAccountInfo.WoWAccountGuid;
+                return WowGuid128.Create(HighGuidType703.WowAccount, GameAccountInfo.Id);
             else
                 return WowGuid128.Create(HighGuidType703.WowAccount, playerGuid.GetCounter());
         }
@@ -832,6 +895,22 @@ namespace HermesProxy
             }
 
             GameState = GameSessionData.CreateNewGameSessionData(this);
+        }
+
+        public void SendHermesTextMessage(string message, bool isError = false)
+        {
+            var socket = InstanceSocket;
+            if (socket != null)
+            {
+                var wholeMessage = new StringBuilder();
+                wholeMessage.Append("|cFF111111[|r|cFF33DD22HermesProxy|r|cFF111111]|r ");
+                if (isError)
+                    wholeMessage.Append("|cFFFF0000");
+                wholeMessage.Append(message);
+                
+                var chatPkt = new ChatPkt(this, ChatMessageTypeModern.System, wholeMessage.ToString());
+                socket.SendPacket(chatPkt);
+            }
         }
     }
 }

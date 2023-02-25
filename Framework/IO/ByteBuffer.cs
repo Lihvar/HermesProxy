@@ -162,6 +162,16 @@ namespace Framework.IO
             return (uint)Time.GetUnixTimeFromPackedTime(ReadUInt32());
         }
 
+        public DateTime ReadTime()
+        {
+            return DateTimeOffset.FromUnixTimeSeconds(ReadUInt32()).DateTime;
+        }
+
+        public DateTime ReadTime64()
+        {
+            return DateTimeOffset.FromUnixTimeSeconds((int)ReadUInt64()).DateTime;
+        }
+
         public Vector2 ReadVector2()
         {
             return new Vector2(ReadFloat(), ReadFloat());
@@ -198,7 +208,7 @@ namespace Framework.IO
         }
 
         //BitPacking
-        public byte ReadBit()
+        public bool ReadBit()
         {
             if (_bitPosition == 8)
             {
@@ -207,10 +217,10 @@ namespace Framework.IO
             }
 
             int returnValue = BitValue;
-            BitValue = (byte)(2 * returnValue);
+            BitValue = (byte)(2 * returnValue); // BitValue <<= 1;
             ++_bitPosition;
 
-            return (byte)(returnValue >> 7);
+            return (returnValue >> 7) != 0;
         }
 
         public bool HasBit()
@@ -501,5 +511,77 @@ namespace Framework.IO
         byte BitValue;
         BinaryWriter writeStream;
         BinaryReader readStream;
+
+        // Hex Printer from WPP
+        // https://github.com/TrinityCore/WowPacketParser/blob/7edfda7e4daf9a5b9069083806a9a3c261dea8a7/WowPacketParser/Misc/Utilities.cs#L48
+        public void DebugPrintHex()
+        {
+            const bool shortVersion = false;
+            const int offset = 0;
+            const bool noOffsetFirstLine = false;
+
+            var data = GetData();
+            
+            var n = Environment.NewLine;
+
+            var prefix = new string(' ', offset);
+
+            var hexDump = new StringBuilder(noOffsetFirstLine ? "" : prefix);
+
+            if (!shortVersion)
+            {
+                var header = "|-------------------------------------------------|---------------------------------|" + n +
+                             "| 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F | 0 1 2 3 4 5 6 7 8 9 A B C D E F |" + n +
+                             "|-------------------------------------------------|---------------------------------|" + n;
+
+                hexDump.Append(header);
+            }
+
+            for (var i = 0; i < data.Length; i += 16)
+            {
+                var text = new StringBuilder();
+                var hex = new StringBuilder(i == 0 ? "" : prefix);
+
+                if (!shortVersion)
+                    hex.Append("| ");
+
+                for (var j = 0; j < 16; j++)
+                {
+                    if (j + i < data.Length)
+                    {
+                        var val = data[j + i];
+                        hex.Append(data[j + i].ToString("X2"));
+
+                        if (!shortVersion)
+                            hex.Append(" ");
+
+                        if (val >= 32 && val <= 127)
+                            text.Append((char)val);
+                        else
+                            text.Append(".");
+
+                        if (!shortVersion)
+                            text.Append(" ");
+                    }
+                    else
+                    {
+                        hex.Append(shortVersion ? "  " : "   ");
+                        text.Append(shortVersion ? " " : "  ");
+                    }
+                }
+
+                hex.Append(shortVersion ? "|" : "| ");
+                hex.Append(text);
+                if (!shortVersion)
+                    hex.Append("|");
+                hex.Append(n);
+                hexDump.Append(hex);
+            }
+
+            if (!shortVersion)
+                hexDump.Append("|-------------------------------------------------|---------------------------------|");
+
+            Console.WriteLine(hexDump);
+        }
     }
 }
